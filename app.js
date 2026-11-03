@@ -83,7 +83,7 @@ $('#fLogin').onsubmit = async e => {
   try {
     const j = await api('login', { pin });
     if (!j.ok) throw j;
-    S = { token: j.token, nombre: j.nombre, rol: j.rol };
+    S = { token: j.token, nombre: j.nombre, rol: j.rol, permisos: j.permisos };
     guardarLS('cv_sesion', S);
     $('#pin').value = '';
     iniciar();
@@ -105,12 +105,33 @@ function salir() {
 document.querySelectorAll('.tabbar button').forEach(b => { b.onclick = () => ver(b.dataset.v); });
 function ver(v) {
   document.querySelectorAll('.tabbar button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.v === v)));
-  ['capturar', 'pendientes', 'registro', 'revision'].forEach(x => { $('#v-' + x).hidden = x !== v; });
+  ['capturar', 'pendientes', 'registro', 'revision', 'placas'].forEach(x => { $('#v-' + x).hidden = x !== v; });
   window.scrollTo({ top: 0 });
   if (v === 'capturar' && !actual) actualizarHoy();
   if (v === 'pendientes') pintarPendientes();
   if (v === 'registro') cargarRegistro();
   if (v === 'revision') cargarRevision();
+  if (v === 'placas') pintarPlacas();
+}
+
+/* ---------------- permisos del rol ---------------- */
+// Sesiones viejas (v1.1) no traen permisos: se deducen del rol hasta que el servidor responda.
+function puede(k) {
+  if (!S) return false;
+  const p = S.permisos || (S.rol === 'residente'
+    ? { fotos: true, registro: true, revisar: true, placas: true }
+    : { fotos: true, registro: true, revisar: false, placas: false });
+  return !!p[k];
+}
+function aplicarPermisos() {
+  document.querySelectorAll('.tabbar button').forEach(b => { b.hidden = !puede(b.dataset.perm); });
+  $('#inicio .stats').hidden = !puede('registro');
+  const activa = document.querySelector('.tabbar button[aria-selected="true"]');
+  if (!activa || activa.hidden) {
+    const primera = [...document.querySelectorAll('.tabbar button')].find(b => !b.hidden);
+    if (primera) ver(primera.dataset.v);
+  }
+  pintarAvisos();
 }
 
 /* ---------------- inicio: resumen del día y avisos ---------------- */
@@ -133,7 +154,7 @@ function pintarHoy(x) {
 async function actualizarHoy() {
   pintarHoy(leerLS('cv_hoy'));
   pintarAvisos();
-  if (!navigator.onLine || !S) return;
+  if (!navigator.onLine || !S || !puede('registro')) return;
   try {
     const j = await api('listar', {});
     if (j.ok) { const x = calcularHoy(j.remisiones); guardarLS('cv_hoy', x); pintarHoy(x); }
@@ -142,7 +163,7 @@ async function actualizarHoy() {
 function pintarAvisos() {
   const a = [];
   if (nCola) a.push(`<button class="aviso" data-ir="pendientes"><svg class="ico peq"><use href="#i-reloj"/></svg><span>${nCola} ${nCola === 1 ? 'foto' : 'fotos'} en este celular sin enviar</span>›</button>`);
-  if (S && S.rol === 'residente' && nRevision) a.push(`<button class="aviso" data-ir="revision"><svg class="ico peq"><use href="#i-alerta"/></svg><span>${nRevision} ${nRevision === 1 ? 'remisión' : 'remisiones'} por revisar</span>›</button>`);
+  if (S && puede('revisar') && nRevision) a.push(`<button class="aviso" data-ir="revision"><svg class="ico peq"><use href="#i-alerta"/></svg><span>${nRevision} ${nRevision === 1 ? 'remisión' : 'remisiones'} por revisar</span>›</button>`);
   $('#avisos').innerHTML = a.join('');
 }
 $('#avisos').onclick = e => { const b = e.target.closest('[data-ir]'); if (b) ver(b.dataset.ir); };
@@ -559,8 +580,80 @@ function pintarRed() {
 window.addEventListener('online', () => { pintarRed(); enviarCola(); });
 window.addEventListener('offline', pintarRed);
 
+/* ---------------- placas (roles con permiso "Editar placas") ---------------- */
+let placaEditando = null;
+function pintarPlacas() {
+  const lista = ((catalogo && catalogo.placas) || []).slice().sort((a, b) => a.placa.localeCompare(b.placa));
+  const sinCap = lista.filter(p => !(p.capacidad > 0)).length;
+  $('#plConteo').textContent = lista.length
+    ? `Placas registradas (${lista.length})${sinCap ? ` · ${sinCap} sin capacidad` : ''}` : 'Placas registradas';
+  $('#listaPlacas').innerHTML = lista.length ? lista.map(p => `<article class="reg ${p.capacidad > 0 ? 'ok' : 'warn'}">
+      <div class="linea"><span class="num">${esc(p.placa)}</span>
+        <span class="qty">${p.capacidad > 0 ? fmtVol(p.capacidad) + ' <small>m³</small>' : '<small>sin capacidad</small>'}</span></div>
+      <div class="meta">${[p.tipo, p.proveedor].filter(Boolean).map(esc).join(' · ') || 'Sin tipo ni proveedor'}</div>
+      <button class="btn chico" type="button" data-placa="${esc(p.placa)}">Editar</button>
+    </article>`).join('')
+    : '<div class="empty">Todavía no hay placas. Agrega la primera con el formulario de arriba.</div>';
+}
+function formPlaca(p) {
+  placaEditando = p ? p.placa : null;
+  $('#plTitulo').textContent = p ? `Editar placa ${p.placa}` : 'Agregar placa';
+  $('#plPlaca').value = p ? p.placa : '';
+  $('#plPlaca').readOnly = !!p;
+  $('#plCapacidad').value = p && p.capacidad > 0 ? p.capacidad : '';
+  $('#plTipo').value = p ? (p.tipo || '') : '';
+  $('#plProveedor').value = p ? (p.proveedor || '') : '';
+  $('#plNota').value = '';
+  $('#btnPlacaNueva').hidden = !p;
+  $('#btnPlacaBorrar').hidden = !p;
+  $('#btnPlacaBorrar').dataset.confirmar = '';
+  $('#btnPlacaBorrar').textContent = 'Quitar de la lista';
+  estado($('#stPlaca'), '');
+}
+$('#listaPlacas').onclick = e => {
+  const b = e.target.closest('[data-placa]');
+  if (!b) return;
+  formPlaca(((catalogo && catalogo.placas) || []).find(p => p.placa === b.dataset.placa));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+$('#btnPlacaNueva').onclick = () => formPlaca(null);
+async function enviarPlaca(datos, msg) {
+  if (!navigator.onLine) return estado($('#stPlaca'), 'Sin señal: las placas solo se guardan con internet.', true);
+  estado($('#stPlaca'), 'Guardando…');
+  try {
+    const j = await api('guardarPlaca', datos);
+    if (!j.ok) throw j;
+    catalogo = Object.assign(catalogo || {}, { placas: j.placas });
+    guardarLS('cv_catalogos', catalogo);
+    pintarCatalogos(catalogo);
+    formPlaca(null);
+    pintarPlacas();
+    toast(msg);
+  } catch (err) {
+    estado($('#stPlaca'), err.mensaje || 'No se pudo guardar la placa.', true);
+  }
+}
+$('#fPlaca').onsubmit = e => {
+  e.preventDefault();
+  const placa = $('#plPlaca').value.trim().toUpperCase();
+  const cap = Number(String($('#plCapacidad').value).replace(',', '.'));
+  if (!placa) return estado($('#stPlaca'), 'Escribe la placa.', true);
+  if (!(cap > 0)) return estado($('#stPlaca'), 'Escribe la capacidad en m³.', true);
+  enviarPlaca({ placa, capacidad: cap, tipo: $('#plTipo').value, proveedor: $('#plProveedor').value.trim(), nota: $('#plNota').value.trim() },
+    `Placa ${placa} guardada con ${fmtVol(cap)} m³.`);
+};
+$('#btnPlacaBorrar').onclick = () => {
+  const b = $('#btnPlacaBorrar');
+  if (!placaEditando) return;
+  if (b.dataset.confirmar !== '1') { b.dataset.confirmar = '1'; b.textContent = '¿Seguro? Toca otra vez'; return; }
+  enviarPlaca({ placa: placaEditando, eliminar: true }, `Placa ${placaEditando} quitada de la lista.`);
+};
+
+let catalogo = null;
 function pintarCatalogos(c) {
   if (!c) return;
+  catalogo = c;
+  if (!$('#v-placas').hidden) pintarPlacas();
   $('#dlProv').innerHTML = (c.proveedores || []).map(p => `<option>${esc(p)}</option>`).join('');
   $('#dlPlacas').innerHTML = (c.placas || []).map(p => `<option>${esc(p.placa)}</option>`).join('');
   const extra = (c.materiales || []).filter(m => ![...$('#dlMat').options].some(o => o.value === m));
@@ -573,7 +666,7 @@ async function iniciar() {
   $('#v-login').hidden = true;
   $('#v-app').hidden = false;
   pintarQuien();
-  $('#tabRev').hidden = S.rol !== 'residente';
+  aplicarPermisos();
   pintarRed();
   contarPendientes();
   pintarHoy(leerLS('cv_hoy'));
@@ -584,14 +677,14 @@ async function iniciar() {
       if (c.ok) {
         guardarLS('cv_catalogos', c);
         pintarCatalogos(c);
-        S.rol = c.rol; S.nombre = c.nombre; guardarLS('cv_sesion', S);
+        S.rol = c.rol; S.nombre = c.nombre; if (c.permisos) S.permisos = c.permisos; guardarLS('cv_sesion', S);
         pintarQuien();
-        $('#tabRev').hidden = S.rol !== 'residente';
+        aplicarPermisos();
       }
     } catch (e) { /* se usan los catálogos guardados */ }
     enviarCola();
     actualizarHoy();
-    if (S && S.rol === 'residente') api('revision', {}).then(j => {
+    if (S && puede('revisar')) api('revision', {}).then(j => {
       if (j.ok) { nRevision = j.pendientes.length; marcador($('#nRev'), nRevision); pintarAvisos(); }
     }).catch(() => {});
   }

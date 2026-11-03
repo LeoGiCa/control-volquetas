@@ -20,6 +20,7 @@
     <symbol id="i-galeria" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></symbol>
     <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/></symbol>
     <symbol id="i-abajo" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-volqueta" viewBox="0 0 24 24"><path d="M2 7h11v8H2zM13 10h4l3 3v2h-7z"/><circle cx="6" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></symbol>
   </svg>
 
   <!-- INGRESO -->
@@ -160,13 +161,39 @@
         <div class="status" id="stRev"></div>
         <div id="listaRev" class="lista"></div>
       </section>
+
+      <!-- PLACAS (roles con permiso "Editar placas") -->
+      <section id="v-placas" hidden>
+        <div class="titulo"><h2>Placas y capacidades</h2>
+          <p class="note">La capacidad es la base del control de volumen: ponla según la cubicación real del platón.</p></div>
+        <form class="panel" id="fPlaca" novalidate>
+          <h2 id="plTitulo">Agregar placa</h2>
+          <div class="grid">
+            <div class="f"><label for="plPlaca">Placa</label><input id="plPlaca" class="mono" autocapitalize="characters" autocomplete="off" placeholder="FCH-399"></div>
+            <div class="f"><label for="plCapacidad">Capacidad (m³)</label><input id="plCapacidad" type="number" step="0.1" min="0" inputmode="decimal" class="mono" placeholder="14"></div>
+            <div class="f"><label for="plTipo">Tipo de volqueta</label>
+              <select id="plTipo"><option value="">—</option><option>Sencilla</option><option>Doble troque</option><option>Cuatro manos</option><option>Tractomula</option><option>Otra</option></select></div>
+            <div class="f"><label for="plProveedor">Proveedor</label><input id="plProveedor" list="dlProv" autocomplete="off"></div>
+            <div class="f full"><label for="plNota">Nota</label><input id="plNota" autocomplete="off" placeholder="Cubicada el 03/11/2026 por topografía"></div>
+          </div>
+          <button class="btn primary grande" type="submit" id="btnPlaca">Guardar placa</button>
+          <div class="grid">
+            <button class="btn" type="button" id="btnPlacaNueva" hidden>Cancelar edición</button>
+            <button class="btn bad" type="button" id="btnPlacaBorrar" hidden>Quitar de la lista</button>
+          </div>
+          <div class="status" id="stPlaca"></div>
+        </form>
+        <div class="titulo"><h2 id="plConteo">Placas registradas</h2></div>
+        <div id="listaPlacas" class="lista"></div>
+      </section>
     </main>
 
     <nav class="tabbar" role="tablist">
-      <button role="tab" data-v="capturar" aria-selected="true"><svg class="ico"><use href="#i-camara"/></svg>Foto</button>
-      <button role="tab" data-v="pendientes" aria-selected="false"><svg class="ico"><use href="#i-reloj"/></svg>Pendientes<span class="n" id="nPend" hidden></span></button>
-      <button role="tab" data-v="registro" aria-selected="false"><svg class="ico"><use href="#i-lista"/></svg>Registro</button>
-      <button role="tab" data-v="revision" aria-selected="false" id="tabRev" hidden><svg class="ico"><use href="#i-revisar"/></svg>Revisar<span class="n" id="nRev" hidden></span></button>
+      <button role="tab" data-v="capturar" data-perm="fotos" aria-selected="true"><svg class="ico"><use href="#i-camara"/></svg>Foto</button>
+      <button role="tab" data-v="pendientes" data-perm="fotos" aria-selected="false"><svg class="ico"><use href="#i-reloj"/></svg>Pendientes<span class="n" id="nPend" hidden></span></button>
+      <button role="tab" data-v="registro" data-perm="registro" aria-selected="false"><svg class="ico"><use href="#i-lista"/></svg>Registro</button>
+      <button role="tab" data-v="revision" data-perm="revisar" aria-selected="false" hidden><svg class="ico"><use href="#i-revisar"/></svg>Revisar<span class="n" id="nRev" hidden></span></button>
+      <button role="tab" data-v="placas" data-perm="placas" aria-selected="false" hidden><svg class="ico"><use href="#i-volqueta"/></svg>Placas</button>
     </nav>
   </div>
 

@@ -164,3 +164,4 @@ section { display: grid; gap: 14px; }
 .overlay img { max-height: 88vh; border-radius: 10px; }
 .overlay .btn { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; width: auto; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + 16px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--hd-bg); color: var(--hd-ink); padding: 12px 18px; border-radius: 12px; max-width: calc(100% - 32px); font-size: .95rem; }
+.reg .btn.chico { justify-self: start; margin-top: 4px; }
