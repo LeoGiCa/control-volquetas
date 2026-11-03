@@ -1,5 +1,5 @@
 /* Control de Volquetas — app del celular.
- * Flujo: foto → se guarda en el celular (cola) → el servidor la lee con Claude →
+ * Flujo: foto → se guarda en el celular (cola) → el servidor la lee con Gemini →
  * el encargado revisa → se envía. Sin señal, la cola espera y se envía después. */
 'use strict';
 
@@ -23,11 +23,14 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toStrin
 function estado(el, msg, err) { el.textContent = msg || ''; el.classList.toggle('err', !!err); }
 let tToast;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(tToast); tToast = setTimeout(() => { t.hidden = true; }, 4500); }
+const claseEstado = e => !e ? '' : e === 'En revisión' ? 'warn' : e === 'No cuenta' ? 'gris' : e.indexOf('Válida') === 0 ? 'ok' : '';
 function chipEstado(e) {
   if (!e) return '<span class="chip">Sin estado</span>';
-  const c = e === 'En revisión' ? 'warn' : e === 'No cuenta' ? 'bad' : e.indexOf('Válida') === 0 ? 'ok' : '';
-  return `<span class="chip ${c}">${esc(e)}</span>`;
+  return `<span class="chip ${claseEstado(e)}">${esc(e)}</span>`;
 }
+const fmtVol = n => Number(n || 0).toLocaleString('es-CO', { maximumFractionDigits: 1 });
+function marcador(el, n) { el.textContent = n > 99 ? '99+' : String(n || ''); el.hidden = !n; }
+let nCola = 0, nRevision = 0;
 
 /* ---------------- servidor ---------------- */
 async function api(accion, datos) {
@@ -70,7 +73,7 @@ const colaDel = id => tx('readwrite', st => st.delete(id));
 const colaTodas = () => tx('readonly', st => st.getAll());
 
 /* ---------------- ingreso ---------------- */
-$('#obraLogin').textContent = CONFIG.OBRA || '';
+$('#obraLogin').textContent = CONFIG.OBRA && CONFIG.OBRA !== 'Nombre de la obra' ? CONFIG.OBRA : 'Registro de remisiones';
 $('#fLogin').onsubmit = async e => {
   e.preventDefault();
   const pin = $('#pin').value.trim();
@@ -99,14 +102,51 @@ function salir() {
 }
 
 /* ---------------- pestañas ---------------- */
-document.querySelectorAll('nav button').forEach(b => { b.onclick = () => ver(b.dataset.v); });
+document.querySelectorAll('.tabbar button').forEach(b => { b.onclick = () => ver(b.dataset.v); });
 function ver(v) {
-  document.querySelectorAll('nav button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.v === v)));
+  document.querySelectorAll('.tabbar button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.v === v)));
   ['capturar', 'pendientes', 'registro', 'revision'].forEach(x => { $('#v-' + x).hidden = x !== v; });
+  window.scrollTo({ top: 0 });
+  if (v === 'capturar' && !actual) actualizarHoy();
   if (v === 'pendientes') pintarPendientes();
   if (v === 'registro') cargarRegistro();
   if (v === 'revision') cargarRevision();
 }
+
+/* ---------------- inicio: resumen del día y avisos ---------------- */
+function modoCaptura(on) {
+  $('#inicio').hidden = on;
+  $('#pFoto').hidden = !on;
+  if (!on) { $('#form').hidden = true; $('#pDup').hidden = true; }
+}
+function calcularHoy(rems) {
+  const h = hoyISO();
+  const v = rems.filter(r => r.fecha === h && String(r.estado || '').indexOf('Válida') === 0);
+  const vol = v.filter(r => /^m3$/i.test(r.unidad || 'm3')).reduce((s, r) => s + Number(r.cantidad || 0), 0);
+  return { fecha: h, viajes: v.length, vol };
+}
+function pintarHoy(x) {
+  const ok = x && x.fecha === hoyISO();
+  $('#sViajes').textContent = ok ? String(x.viajes) : '—';
+  $('#sVol').textContent = ok ? fmtVol(x.vol) + ' m³' : '—';
+}
+async function actualizarHoy() {
+  pintarHoy(leerLS('cv_hoy'));
+  pintarAvisos();
+  if (!navigator.onLine || !S) return;
+  try {
+    const j = await api('listar', {});
+    if (j.ok) { const x = calcularHoy(j.remisiones); guardarLS('cv_hoy', x); pintarHoy(x); }
+  } catch (e) { /* queda el último resumen guardado */ }
+}
+function pintarAvisos() {
+  const a = [];
+  if (nCola) a.push(`<button class="aviso" data-ir="pendientes"><svg class="ico peq"><use href="#i-reloj"/></svg><span>${nCola} ${nCola === 1 ? 'foto' : 'fotos'} en este celular sin enviar</span>›</button>`);
+  if (S && S.rol === 'residente' && nRevision) a.push(`<button class="aviso" data-ir="revision"><svg class="ico peq"><use href="#i-alerta"/></svg><span>${nRevision} ${nRevision === 1 ? 'remisión' : 'remisiones'} por revisar</span>›</button>`);
+  $('#avisos').innerHTML = a.join('');
+}
+$('#avisos').onclick = e => { const b = e.target.closest('[data-ir]'); if (b) ver(b.dataset.ir); };
+$('#btnInicio').onclick = () => limpiar();
 
 /* ---------------- foto ---------------- */
 $('#foto').onchange = e => nuevaFoto(e.target.files[0]);
@@ -114,6 +154,11 @@ $('#fotoGaleria').onchange = e => nuevaFoto(e.target.files[0]);
 
 async function nuevaFoto(file) {
   if (!file) return;
+  actual = null;
+  ver('capturar');
+  modoCaptura(true);
+  $('#form').hidden = true; $('#pDup').hidden = true;
+  $('#drop').innerHTML = '';
   estado($('#stCap'), 'Preparando la foto…');
   try {
     const [imagen, hash] = await Promise.all([comprimir(file), huella(file)]);
@@ -148,9 +193,8 @@ async function huella(file) {
 function abrir(it) {
   actual = it;
   ver('capturar');
-  const d = $('#drop');
-  d.classList.add('has');
-  d.innerHTML = `<img src="${it.imagen}" alt="Foto de la remisión"><span>Toca para tomar otra foto</span>`;
+  modoCaptura(true);
+  $('#drop').innerHTML = `<img src="${it.imagen}" alt="Foto de la remisión"><span>Toca la foto para tomar otra</span>`;
   $('#pDup').hidden = true;
   if (it.estado === 'sin_leer') {
     $('#form').hidden = true;
@@ -166,8 +210,8 @@ function pintarBotonesSinLeer() {
   const st = $('#stCap');
   st.innerHTML = '';
   const fila = document.createElement('div');
-  fila.className = 'row';
-  fila.innerHTML = `<button class="btn primary" type="button" id="btnLeer">Leer recibo</button>
+  fila.className = 'grid';
+  fila.innerHTML = `<button class="btn primary grande" type="button" id="btnLeer">Leer recibo</button>
     <button class="btn" type="button" id="btnManual">Llenar a mano</button>`;
   st.appendChild(fila);
   $('#btnLeer').onclick = () => leerItem(actual);
@@ -209,6 +253,8 @@ function mostrarFormulario(it) {
     $('#' + k).value = v ?? '';
     $('#' + k).closest('.f').classList.toggle('dudoso', (it.dudosos || []).indexOf(k) >= 0);
   });
+  // "Más datos" se abre solo si ahí hay algo dudoso o una firma que revisar.
+  $('#masDatos').open = !!$('#masDatos .f.dudoso') || $('#firma').value !== 'si';
   pintarAlertas();
   $('#form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -269,18 +315,16 @@ $('#btnDescartar').onclick = async () => {
 
 function limpiar() {
   actual = null;
-  $('#form').hidden = true;
-  $('#pDup').hidden = true;
-  $('#capTitulo').textContent = '1 · Foto del recibo';
-  const d = $('#drop');
-  d.classList.remove('has');
-  d.innerHTML = '<strong>Tomar foto de la remisión</strong><span>Recibo completo, de frente y con buena luz.</span>';
+  modoCaptura(false);
+  $('#drop').innerHTML = '';
+  $('#masDatos').open = false;
   $('#btnDescartar').dataset.confirmar = '';
   $('#btnDescartar').textContent = 'Descartar';
   estado($('#stCap'), ''); estado($('#stForm'), ''); estado($('#stDup'), '');
   $('#explicacion').value = '';
   $('#dupExplica').hidden = true;
   contarPendientes();
+  actualizarHoy();
   window.scrollTo({ top: 0 });
 }
 
@@ -389,8 +433,9 @@ $('#dupImgVieja').onclick = e => ampliar(e.target.src);
 /* ---------------- pendientes ---------------- */
 async function contarPendientes() {
   try {
-    const n = (await colaTodas()).length;
-    $('#nPend').textContent = n ? `(${n})` : '';
+    nCola = (await colaTodas()).length;
+    marcador($('#nPend'), nCola);
+    pintarAvisos();
   } catch (e) { /* sin IndexedDB */ }
 }
 
@@ -407,7 +452,7 @@ async function pintarPendientes() {
       <div class="main"><span class="num">${d.numero ? 'N.º ' + esc(d.numero) : 'Sin datos'} · tomada ${new Date(it.creado).toLocaleString('es-CO')}</span>
         <div class="meta">${esc(d.material || '')} ${d.proveedor ? '· ' + esc(d.proveedor) : ''}</div></div>
       <span class="chip ${cls[it.estado] || ''}">${txt[it.estado] || it.estado}</span>
-      <div class="full"><div class="row"><button class="btn" data-abrir="${it.id}">Abrir</button></div></div>
+      <div class="full"><button class="btn" data-abrir="${it.id}">Abrir</button></div>
     </article>`;
   }).join('');
 }
@@ -425,21 +470,23 @@ async function cargarRegistro() {
   try {
     const j = await api('listar', {});
     if (!j.ok) throw j;
-    estado($('#stReg'), j.remisiones.length ? `Últimas ${j.remisiones.length} remisiones registradas.` : '');
+    estado($('#stReg'), '');
+    const x = calcularHoy(j.remisiones);
+    guardarLS('cv_hoy', x); pintarHoy(x);
+    $('#regResumen').textContent = `Hoy: ${x.viajes} ${x.viajes === 1 ? 'viaje válido' : 'viajes válidos'} · ${fmtVol(x.vol)} m³. Abajo, las últimas ${j.remisiones.length} remisiones.`;
     $('#listaReg').innerHTML = j.remisiones.length ? j.remisiones.map(tarjeta).join('') :
-      '<div class="empty">Aún no hay remisiones. Ve a Capturar y toma la foto del primer recibo.</div>';
+      '<div class="empty">Aún no hay remisiones. Toca Foto y fotografía el primer recibo.</div>';
   } catch (err) {
     estado($('#stReg'), err.mensaje || 'No se pudo cargar el registro.', true);
   }
 }
 function tarjeta(r) {
-  return `<article class="card">
-    <span class="thumb none">${r.tieneFoto ? 'foto' : 'sin foto'}</span>
-    <div class="main"><span class="num">N.º ${esc(r.numero)} · ${fechaCO(r.fecha)}${r.hora ? ' ' + esc(r.hora) : ''}</span><br>
-      <b>${esc(r.material || '—')}</b>
-      <div class="meta">${esc(r.proveedor)} · ${esc(r.placa)} · registró ${esc(r.registro)}</div></div>
-    <div class="qty">${fmt(r.cantidad)} <small>${esc(r.unidad)}</small></div>
-    <div class="full">${chipEstado(r.estado)}${r.motivo ? `<ul class="alerts"><li class="bad">${esc(r.motivo)}</li></ul>` : ''}</div>
+  return `<article class="reg ${claseEstado(r.estado)}">
+    <div class="linea"><span class="num">N.º ${esc(r.numero)}</span>${chipEstado(r.estado)}</div>
+    <div class="linea"><b>${esc(r.material || '—')}</b><span class="qty">${fmt(r.cantidad)} <small>${esc(r.unidad)}</small></span></div>
+    <div class="meta">${esc(r.proveedor)} · placa ${esc(r.placa)} · ${fechaCO(r.fecha)}${r.hora ? ' ' + esc(r.hora) : ''}</div>
+    <div class="meta">Registró ${esc(r.registro)}${r.tieneFoto ? '' : ' · sin foto'}</div>
+    ${r.motivo ? `<ul class="alerts"><li class="${r.estado === 'En revisión' ? '' : 'bad'}">${esc(r.motivo)}</li></ul>` : ''}
   </article>`;
 }
 
@@ -449,23 +496,25 @@ async function cargarRevision() {
   try {
     const j = await api('revision', {});
     if (!j.ok) throw j;
-    $('#nRev').textContent = j.pendientes.length ? `(${j.pendientes.length})` : '';
+    nRevision = j.pendientes.length;
+    marcador($('#nRev'), nRevision);
+    pintarAvisos();
     estado($('#stRev'), '');
     const box = $('#listaRev');
     if (!j.pendientes.length) { box.innerHTML = '<div class="empty">No hay remisiones pendientes de revisión.</div>'; return; }
-    box.innerHTML = j.pendientes.map(r => `<article class="card">
-      <span class="thumb none">revisar</span>
-      <div class="main"><span class="num">N.º ${esc(r.numero)} · ${fechaCO(r.fecha)} · registró ${esc(r.registro)}</span><br>
-        <b>${esc(r.material)}</b><div class="meta">${esc(r.proveedor)} · ${esc(r.placa)}</div></div>
-      <div class="qty">${fmt(r.cantidad)} <small>${esc(r.unidad)}</small></div>
-      <div class="full">
+    box.innerHTML = j.pendientes.map(r => `<article class="reg warn">
+      <div class="linea"><span class="num">N.º ${esc(r.numero)}</span>${chipEstado(r.estado)}</div>
+      <div class="linea"><b>${esc(r.material || '—')}</b><span class="qty">${fmt(r.cantidad)} <small>${esc(r.unidad)}</small></span></div>
+      <div class="meta">${esc(r.proveedor)} · placa ${esc(r.placa)} · ${fechaCO(r.fecha)}${r.hora ? ' ' + esc(r.hora) : ''}</div>
+      <div class="meta">Registró ${esc(r.registro)}</div>
+      <div class="card-cuerpo">
         <ul class="alerts"><li class="bad">${esc(r.motivo)}</li>${r.explicacion ? `<li>Explicación del encargado: ${esc(r.explicacion)}</li>` : ''}</ul>
         <div class="compara">
           <figure><img data-foto="${esc(r.id)}" alt="Remisión en revisión"><figcaption>En revisión: N.º ${esc(r.numero)}</figcaption></figure>
           ${r.relacionado ? `<figure><img data-foto="${esc(r.relacionado.id)}" alt="Remisión relacionada"><figcaption>Ya registrada: N.º ${esc(r.relacionado.numero)} · ${fmt(r.relacionado.cantidad)} ${esc(r.relacionado.unidad)} · ${esc(r.relacionado.registrado)} · ${esc(r.relacionado.estado)}</figcaption></figure>` : '<figure><figcaption>Sin remisión relacionada (revisión por capacidad).</figcaption></figure>'}
         </div>
         <div class="f"><label for="nota-${esc(r.id)}">Nota de revisión</label><input id="nota-${esc(r.id)}" placeholder="Ej.: confirmado con el proveedor"></div>
-        <div class="row">
+        <div class="grid">
           <button class="btn primary" data-decidir="contar" data-id="${esc(r.id)}">Contar</button>
           <button class="btn bad" data-decidir="no_contar" data-id="${esc(r.id)}">No contar</button>
         </div>
@@ -505,7 +554,7 @@ $('#ov').onclick = e => { if (e.target.id === 'ov') $('#ov').hidden = true; };
 function pintarRed() {
   const r = $('#red');
   r.textContent = navigator.onLine ? 'En línea' : 'Sin señal';
-  r.className = 'chip ' + (navigator.onLine ? 'ok' : 'warn');
+  r.className = 'red' + (navigator.onLine ? '' : ' off');
 }
 window.addEventListener('online', () => { pintarRed(); enviarCola(); });
 window.addEventListener('offline', pintarRed);
@@ -523,10 +572,11 @@ function pintarCatalogos(c) {
 async function iniciar() {
   $('#v-login').hidden = true;
   $('#v-app').hidden = false;
-  $('#quien').textContent = `${S.nombre} · ${S.rol === 'residente' ? 'Residente' : 'Encargado'}${CONFIG.OBRA ? ' · ' + CONFIG.OBRA : ''}`;
+  pintarQuien();
   $('#tabRev').hidden = S.rol !== 'residente';
   pintarRed();
   contarPendientes();
+  pintarHoy(leerLS('cv_hoy'));
   pintarCatalogos(leerLS('cv_catalogos'));
   if (navigator.onLine) {
     try {
@@ -535,12 +585,23 @@ async function iniciar() {
         guardarLS('cv_catalogos', c);
         pintarCatalogos(c);
         S.rol = c.rol; S.nombre = c.nombre; guardarLS('cv_sesion', S);
+        pintarQuien();
         $('#tabRev').hidden = S.rol !== 'residente';
       }
     } catch (e) { /* se usan los catálogos guardados */ }
     enviarCola();
-    if (S && S.rol === 'residente') api('revision', {}).then(j => { if (j.ok) $('#nRev').textContent = j.pendientes.length ? `(${j.pendientes.length})` : ''; }).catch(() => {});
+    actualizarHoy();
+    if (S && S.rol === 'residente') api('revision', {}).then(j => {
+      if (j.ok) { nRevision = j.pendientes.length; marcador($('#nRev'), nRevision); pintarAvisos(); }
+    }).catch(() => {});
   }
+}
+function pintarQuien() {
+  const nombre = String(S.nombre || '').trim();
+  const primer = /^residente\b/i.test(nombre) ? '' : nombre.split(/\s+/)[0];
+  $('#hola').textContent = primer ? `Hola, ${primer}` : 'Hola';
+  const rol = S.rol ? S.rol.charAt(0).toUpperCase() + S.rol.slice(1) : '';
+  $('#quien').textContent = [rol, CONFIG.OBRA && CONFIG.OBRA !== 'Nombre de la obra' ? CONFIG.OBRA : ''].filter(Boolean).join(' · ');
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
