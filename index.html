@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1f4fa3">
+  <title>Control de Volquetas</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- INGRESO -->
+  <main id="v-login" class="login" hidden>
+    <form id="fLogin" class="panel" novalidate>
+      <h1>Control de Volquetas</h1>
+      <p class="note" id="obraLogin"></p>
+      <div class="f"><label for="pin">PIN personal</label>
+        <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" required></div>
+      <button class="btn primary" type="submit" id="btnEntrar">Entrar</button>
+      <div class="status" id="stLogin"></div>
+    </form>
+  </main>
+
+  <!-- APP -->
+  <div id="v-app" hidden>
+    <header>
+      <div class="wrap">
+        <div class="top">
+          <div><h1>Control de Volquetas</h1><span class="obra" id="quien"></span></div>
+          <div class="row">
+            <span class="chip" id="red"></span>
+            <button class="link" id="btnSalir">Salir</button>
+          </div>
+        </div>
+        <nav role="tablist">
+          <button role="tab" data-v="capturar" aria-selected="true">Capturar</button>
+          <button role="tab" data-v="pendientes" aria-selected="false">Pendientes<span class="n" id="nPend"></span></button>
+          <button role="tab" data-v="registro" aria-selected="false">Registro</button>
+          <button role="tab" data-v="revision" aria-selected="false" id="tabRev" hidden>Revisión<span class="n" id="nRev"></span></button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <!-- CAPTURAR -->
+      <section id="v-capturar">
+        <div class="panel" id="pFoto">
+          <h2 id="capTitulo">1 · Foto del recibo</h2>
+          <label class="drop" id="drop" for="foto">
+            <strong>Tomar foto de la remisión</strong>
+            <span>Recibo completo, de frente y con buena luz.</span>
+          </label>
+          <input type="file" id="foto" accept="image/*" capture="environment" hidden>
+          <label class="link" for="fotoGaleria" style="justify-self:start">Elegir una foto guardada</label>
+          <input type="file" id="fotoGaleria" accept="image/*" hidden>
+          <div class="status" id="stCap"></div>
+        </div>
+
+        <form class="panel" id="form" hidden novalidate>
+          <h2>2 · Revisa y corrige</h2>
+          <p class="note">En amarillo, lo que no se leyó con seguridad. Compáralo con el papel antes de guardar.</p>
+          <div class="grid">
+            <div class="f" data-k="numero"><label for="numero">N.º remisión</label><input id="numero" class="mono" autocomplete="off"></div>
+            <div class="f" data-k="fecha"><label for="fecha">Fecha</label><input id="fecha" type="date"></div>
+            <div class="f" data-k="hora"><label for="hora">Hora</label><input id="hora" type="time"></div>
+            <div class="f" data-k="proveedor"><label for="proveedor">Proveedor</label><input id="proveedor" list="dlProv" autocomplete="off"></div>
+            <div class="f" data-k="nit"><label for="nit">NIT proveedor</label><input id="nit" class="mono" autocomplete="off"></div>
+            <div class="f" data-k="cliente"><label for="cliente">Despachado a (Señor)</label><input id="cliente" autocomplete="off"></div>
+            <div class="f" data-k="placa"><label for="placa">Placa</label><input id="placa" class="mono" list="dlPlacas" autocapitalize="characters" autocomplete="off"></div>
+            <div class="f" data-k="conductor"><label for="conductor">Conductor</label><input id="conductor" autocomplete="off"></div>
+            <div class="f" data-k="origen"><label for="origen">Origen</label><input id="origen" autocomplete="off"></div>
+            <div class="f" data-k="destino"><label for="destino">Destino / frente</label><input id="destino" autocomplete="off"></div>
+            <div class="f" data-k="material"><label for="material">Material</label><input id="material" list="dlMat" autocomplete="off"></div>
+            <div class="f" data-k="cantidad"><label for="cantidad">Cantidad</label><input id="cantidad" type="number" step="0.01" min="0" inputmode="decimal" class="mono"></div>
+            <div class="f" data-k="unidad"><label for="unidad">Unidad</label>
+              <select id="unidad"><option>m3</option><option>ton</option><option>viaje</option><option>kg</option><option>und</option></select></div>
+            <div class="f" data-k="firma"><label for="firma">Firma de recibido</label>
+              <select id="firma"><option value="si">Firmado</option><option value="no">Sin firma</option><option value="ilegible">Firma ilegible</option></select></div>
+            <div class="f full" data-k="observaciones"><label for="observaciones">Observaciones</label><textarea id="observaciones" rows="2"></textarea></div>
+          </div>
+          <ul class="alerts" id="alertas"></ul>
+          <div class="row">
+            <button class="btn primary" type="submit" id="btnGuardar">Guardar remisión</button>
+            <button class="btn" type="button" id="btnDescartar">Descartar</button>
+          </div>
+          <div class="status" id="stForm"></div>
+        </form>
+
+        <!-- Decisión ante un duplicado -->
+        <div class="panel danger" id="pDup" hidden>
+          <h2>Remisión repetida</h2>
+          <p id="dupTexto"></p>
+          <div class="compara">
+            <figure><img id="dupImgNueva" alt="Foto que acabas de tomar"><figcaption>La que acabas de tomar</figcaption></figure>
+            <figure><img id="dupImgVieja" alt="Foto ya registrada"><figcaption id="dupCapVieja">Ya registrada</figcaption></figure>
+          </div>
+          <div class="row">
+            <button class="btn primary" type="button" id="btnDupMismo">Es el mismo recibo: no guardar</button>
+            <button class="btn" type="button" id="btnDupDistinto">Es un recibo distinto</button>
+          </div>
+          <div id="dupExplica" class="grid" hidden>
+            <div class="f full"><label for="explicacion">¿Por qué es distinto? (lo revisa el residente)</label>
+              <textarea id="explicacion" rows="2" placeholder="Ej.: el proveedor repitió la numeración del talonario"></textarea></div>
+            <div class="row"><button class="btn primary" type="button" id="btnDupEnviar">Enviar a revisión</button></div>
+          </div>
+          <div class="status" id="stDup"></div>
+        </div>
+
+        <datalist id="dlProv"></datalist>
+        <datalist id="dlPlacas"></datalist>
+        <datalist id="dlMat"><option>Crudo de río</option><option>Arena</option><option>Cascajillo</option><option>Triturado</option><option>Base granular</option><option>Sub-base granular</option><option>Recebo</option><option>Bolo para gaviones</option><option>Rajón</option><option>Material de relleno</option><option>Mezcla asfáltica</option><option>Concreto</option><option>Retiro de escombros</option></datalist>
+      </section>
+
+      <!-- PENDIENTES (guardados en el celular, aún no enviados) -->
+      <section id="v-pendientes" hidden>
+        <p class="note">Fotos guardadas en este celular que todavía no están en el registro. Las que ya revisaste se envían solas cuando hay señal.</p>
+        <div id="listaPend" class="lista"></div>
+      </section>
+
+      <!-- REGISTRO -->
+      <section id="v-registro" hidden>
+        <div class="row" id="accionesReg">
+          <button class="btn" id="btnActualizar">Actualizar</button>
+          <a class="btn" id="lnkExcel" target="_blank" rel="noopener" hidden>Descargar Excel</a>
+          <a class="btn" id="lnkHoja" target="_blank" rel="noopener" hidden>Abrir hoja</a>
+        </div>
+        <div class="status" id="stReg"></div>
+        <div id="listaReg" class="lista"></div>
+      </section>
+
+      <!-- REVISIÓN (solo residente) -->
+      <section id="v-revision" hidden>
+        <p class="note">Remisiones que no suman hasta que decidas. Compara las fotos y elige.</p>
+        <div class="status" id="stRev"></div>
+        <div id="listaRev" class="lista"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="overlay" id="ov" hidden><img id="ovImg" alt="Foto de la remisión"><button class="btn" id="ovCerrar">Cerrar</button></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
