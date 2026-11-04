@@ -2,5 +2,5 @@
 // Termina en /exec. Ejemplo: https://script.google.com/macros/s/AKfy.../exec
 window.CONFIG = {
   SERVIDOR: 'https://script.google.com/macros/s/AKfycbwNgrMa9JQH9tklCZqfjoY8tlqGcqFiRi9pSJxocJp_pdf0Vm503zwDHrMPrqJ2wk-R/exec',
-  OBRA: 'Nombre de la obra'
+  OBRA: 'Vía Zaragoza'
 };

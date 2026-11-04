@@ -175,6 +175,8 @@ $('#fotoGaleria').onchange = e => nuevaFoto(e.target.files[0]);
 
 async function nuevaFoto(file) {
   if (!file) return;
+  // Si la foto anterior no se alcanzó a leer, la nueva la reemplaza (no queda basura en Pendientes).
+  const previa = actual;
   actual = null;
   ver('capturar');
   modoCaptura(true);
@@ -182,13 +184,16 @@ async function nuevaFoto(file) {
   $('#drop').innerHTML = '';
   estado($('#stCap'), 'Preparando la foto…');
   try {
+    if (previa && previa.estado === 'sin_leer' && !previa.datos) await colaDel(previa.id);
     const [imagen, hash] = await Promise.all([comprimir(file), huella(file)]);
-    const it = { id: uuid(), creado: new Date().toISOString(), imagen, hash, estado: 'sin_leer' };
+    const calidad = await revisarCalidad(imagen);
+    const it = { id: uuid(), creado: new Date().toISOString(), imagen, hash, estado: 'sin_leer', calidad: calidad.problemas };
     await colaPut(it);
     abrir(it);
     contarPendientes();
+    if (calidad.problemas.length) return pintarRepetir(it, 'La foto ' + calidad.problemas.join(' y ') + '. Tómala otra vez: recibo completo, de frente, con buena luz y el celular quieto.', true);
     if (navigator.onLine) leerItem(it);
-    else estado($('#stCap'), 'Sin señal: la foto quedó guardada en Pendientes. Léela cuando vuelva la señal, o llena los datos a mano.');
+    else estado($('#stCap'), 'Sin señal: la foto quedó guardada en Pendientes y se leerá sola cuando vuelva la señal. Si prefieres, llena los datos a mano.');
   } catch (err) {
     estado($('#stCap'), 'No se pudo procesar la foto. Intenta con otra.', true);
   } finally {
@@ -205,6 +210,64 @@ async function comprimir(file, max = 1600, q = 0.8) {
   return c.toDataURL('image/jpeg', q);
 }
 
+/* Revisa la foto en el celular, sin gastar lecturas: oscura, quemada, borrosa o pequeña.
+ * Nitidez = varianza del laplaciano sobre la imagen en gris reducida a 640 px. */
+const CALIDAD = { LUZ_MIN: 70, LUZ_MAX: 245, NITIDEZ_MIN: 90, LADO_MIN: 700 };
+async function revisarCalidad(dataUrl) {
+  const problemas = [];
+  try {
+    const img = new Image();
+    await new Promise((ok, mal) => { img.onload = ok; img.onerror = mal; img.src = dataUrl; });
+    if (Math.min(img.width, img.height) < CALIDAD.LADO_MIN) problemas.push('tiene muy poca resolución');
+    const k = Math.min(1, 640 / Math.max(img.width, img.height));
+    const w = Math.max(8, Math.round(img.width * k)), h = Math.max(8, Math.round(img.height * k));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(img, 0, 0, w, h);
+    const px = cx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    let suma = 0;
+    for (let i = 0; i < w * h; i++) { g[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]; suma += g[i]; }
+    const luz = suma / (w * h);
+    let n = 0, m = 0, m2 = 0;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const l = g[i - w] + g[i + w] + g[i - 1] + g[i + 1] - 4 * g[i];
+      n++; m += l; m2 += l * l;
+    }
+    const nitidez = n ? m2 / n - (m / n) ** 2 : 0;
+    if (luz < CALIDAD.LUZ_MIN) problemas.push('está muy oscura');
+    else if (luz > CALIDAD.LUZ_MAX) problemas.push('tiene demasiada luz o reflejo');
+    if (nitidez < CALIDAD.NITIDEZ_MIN) problemas.push('está borrosa o movida');
+    return { problemas, luz: Math.round(luz), nitidez: Math.round(nitidez) };
+  } catch (e) {
+    return { problemas };   // si el navegador no deja analizarla, no se frena el trabajo
+  }
+}
+
+/* La foto no sirve: pide repetirla. "Usar esta" solo se ofrece cuando el aviso viene del celular,
+ * porque si Gemini ya dijo que no se lee, insistir solo gasta lecturas. */
+function pintarRepetir(it, mensaje, permitirUsar) {
+  if (!actual || actual.id !== it.id) return;
+  $('#form').hidden = true;
+  const st = $('#stCap');
+  st.classList.remove('err');
+  st.innerHTML = `<div class="repetir" role="alert"><p>${esc(mensaje)}</p>
+    <label class="btn primary grande" for="foto"><svg class="ico"><use href="#i-camara"/></svg>Tomar otra foto</label>
+    <div class="grid">${permitirUsar ? '<button class="btn" type="button" id="btnUsarIgual">Usar esta foto</button>' : ''}
+      <button class="btn" type="button" id="btnManual">Llenar a mano</button></div></div>`;
+  if (permitirUsar) $('#btnUsarIgual').onclick = () => {
+    it.calidad = []; colaPut(it);
+    if (navigator.onLine) leerItem(it);
+    else estado($('#stCap'), 'Sin señal: la foto quedó en Pendientes y se leerá sola cuando vuelva la señal.');
+  };
+  $('#btnManual').onclick = () => llenarAMano();
+}
+function llenarAMano() {
+  actual.datos = {}; actual.dudosos = []; actual.estado = 'por_revisar'; actual.calidad = [];
+  colaPut(actual); estado($('#stCap'), ''); mostrarFormulario(actual);
+}
+
 async function huella(file) {
   const h = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
   return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -219,7 +282,9 @@ function abrir(it) {
   $('#pDup').hidden = true;
   if (it.estado === 'sin_leer') {
     $('#form').hidden = true;
-    pintarBotonesSinLeer();
+    if (it.repetir) pintarRepetir(it, it.repetir, false);
+    else if (it.calidad && it.calidad.length) pintarRepetir(it, 'La foto ' + it.calidad.join(' y ') + '. Tómala otra vez: recibo completo, de frente, con buena luz y el celular quieto.', true);
+    else pintarBotonesSinLeer();
   } else if (it.estado === 'requiere_decision') {
     mostrarDuplicado(it);
   } else {
@@ -227,20 +292,24 @@ function abrir(it) {
   }
 }
 
-function pintarBotonesSinLeer() {
+function pintarBotonesSinLeer(mensaje) {
   const st = $('#stCap');
-  st.innerHTML = '';
+  st.innerHTML = mensaje ? `<p class="status err">${esc(mensaje)}</p>` : '';
+  st.classList.remove('err');
   const fila = document.createElement('div');
   fila.className = 'grid';
   fila.innerHTML = `<button class="btn primary grande" type="button" id="btnLeer">Leer recibo</button>
     <button class="btn" type="button" id="btnManual">Llenar a mano</button>`;
   st.appendChild(fila);
   $('#btnLeer').onclick = () => leerItem(actual);
-  $('#btnManual').onclick = () => { actual.datos = {}; actual.dudosos = []; actual.estado = 'por_revisar'; colaPut(actual); mostrarFormulario(actual); };
+  $('#btnManual').onclick = () => llenarAMano();
 }
 
-async function leerItem(it) {
-  estado($('#stCap'), 'Leyendo el recibo… puede tardar entre 10 y 40 segundos.');
+/* Lee la foto en el servidor. Devuelve 'ok' | 'duplicada' | 'repetir' | 'limite' | 'red' | 'error'.
+ * auto = lectura sola al volver la señal (no toca la pantalla salvo que esa foto esté abierta). */
+async function leerItem(it, auto) {
+  const enPantalla = () => actual && actual.id === it.id;
+  if (enPantalla()) estado($('#stCap'), 'Leyendo el recibo… puede tardar entre 10 y 40 segundos.');
   try {
     const j = await api('leer', { imagen: it.imagen, hash: it.hash });
     if (j.fotoDuplicada) {
@@ -248,17 +317,24 @@ async function leerItem(it) {
       it.duplicado = j.fotoDuplicada;
       it.fotoRepetida = true;
       await colaPut(it);
-      return mostrarDuplicado(it);
+      if (enPantalla()) mostrarDuplicado(it);
+      return 'duplicada';
     }
     if (!j.ok) throw j;
     Object.assign(it, { datos: j.datos, original: j.datos, dudosos: j.dudosos || [], alertasLectura: j.alertasLectura || [],
-      controles: j.controles, leidoIA: true, estado: 'por_revisar' });
+      controles: j.controles, leidoIA: true, estado: 'por_revisar', repetir: null });
     await colaPut(it);
-    estado($('#stCap'), 'Listo. Revisa los datos.');
-    if (actual && actual.id === it.id) mostrarFormulario(it);
+    if (enPantalla()) { estado($('#stCap'), 'Listo. Revisa los datos contra el papel.'); mostrarFormulario(it); }
+    return 'ok';
   } catch (err) {
-    estado($('#stCap'), (err.mensaje || 'No se pudo leer.') + (err.error === 'red' ? ' La foto quedó en Pendientes.' : ''), true);
-    if (actual && actual.id === it.id) pintarBotonesSinLeer();
+    if (err.error === 'repetir' || err.error === 'no_remision') {
+      it.repetir = err.mensaje;
+      await colaPut(it);
+      if (enPantalla()) pintarRepetir(it, err.mensaje, false);
+      return 'repetir';
+    }
+    if (enPantalla()) pintarBotonesSinLeer((err.mensaje || 'No se pudo leer.') + (err.error === 'red' ? ' La foto quedó en Pendientes.' : ''));
+    return err.error === 'ia_limite' ? 'limite' : err.error === 'red' ? 'red' : 'error';
   }
 }
 
@@ -276,6 +352,8 @@ function mostrarFormulario(it) {
   });
   // "Más datos" se abre solo si ahí hay algo dudoso o una firma que revisar.
   $('#masDatos').open = !!$('#masDatos .f.dudoso') || $('#firma').value !== 'si';
+  $('#okNumero').checked = false; $('#okCantidad').checked = false;
+  pintarConfirma();
   pintarAlertas();
   $('#form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -289,10 +367,27 @@ function leerFormulario() {
 }
 
 $('#form').addEventListener('input', e => {
+  const id = e.target.id;
+  if (id === 'okNumero' || id === 'okCantidad') return pintarConfirma();
   const f = e.target.closest('.f');
   if (f) f.classList.remove('dudoso');
+  // Si cambian el N.º o la cantidad, hay que volver a confirmarlos contra el papel.
+  if (id === 'numero') $('#okNumero').checked = false;
+  if (id === 'cantidad' || id === 'unidad') $('#okCantidad').checked = false;
+  pintarConfirma();
   pintarAlertas();
 });
+
+/* Confirmación obligatoria: N.º y cantidad son los que, si están mal, se pagan mal. */
+function pintarConfirma() {
+  const n = $('#numero').value.trim(), c = $('#cantidad').value.trim();
+  $('#cNumero').textContent = n || '—';
+  $('#cCantidad').textContent = c ? `${fmt(c)} ${$('#unidad').value}` : '—';
+  const listo = $('#okNumero').checked && $('#okCantidad').checked;
+  $('#confirma').classList.toggle('listo', listo);
+  if (listo && /casillas/.test($('#stForm').textContent)) estado($('#stForm'), '');
+  $('#btnGuardar').textContent = listo ? 'Guardar remisión' : 'Confirma N.º y cantidad para guardar';
+}
 
 function pintarAlertas() {
   if (!actual) return;
@@ -314,7 +409,12 @@ $('#form').onsubmit = async e => {
   if (!actual) return;
   const d = leerFormulario();
   if (!d.numero || !d.proveedor || d.cantidad === null) return estado($('#stForm'), 'Completa al menos N.º de remisión, proveedor y cantidad.', true);
+  if (!$('#okNumero').checked || !$('#okCantidad').checked) {
+    $('#confirma').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return estado($('#stForm'), 'Compara con el papel y marca las dos casillas: N.º y cantidad.', true);
+  }
   actual.datos = d;
+  actual.auto = false;
   actual.corregidos = actual.original ? CAMPOS.filter(k => String(actual.original[k] ?? '') !== String(d[k] ?? '')) : [];
   actual.estado = 'por_enviar';
   await colaPut(actual);
@@ -350,14 +450,14 @@ function limpiar() {
 }
 
 /* ---------------- envío ---------------- */
-async function enviarItem(it, enPantalla) {
+async function enviarItem(it, enPantalla, callado) {
   const st = enPantalla ? $('#stForm') : null;
   if (st) estado(st, 'Guardando…');
   try {
     const j = await api('guardar', {
       id: it.id, datos: it.datos, imagen: it.imagen, hash: it.hash, leidoIA: !!it.leidoIA,
       corregidos: it.corregidos || [], alertasLectura: it.alertasLectura || [],
-      decision: it.decision || null, explicacion: it.explicacion || ''
+      decision: it.decision || null, explicacion: it.explicacion || '', auto: !!it.auto
     });
     if (j.ok) {
       await colaDel(it.id);
@@ -365,7 +465,7 @@ async function enviarItem(it, enPantalla) {
         ? `Remisión ${it.datos.numero} guardada EN REVISIÓN: ${j.motivo}. No suma hasta que el residente decida.`
         : `Remisión ${it.datos.numero} guardada.`;
       if (actual && actual.id === it.id) limpiar();
-      toast(msg);
+      if (!callado) toast(msg);
       return true;
     }
     if (j.error === 'requiere_decision' || j.error === 'foto_duplicada' || j.error === 'falta_explicacion') {
@@ -392,11 +492,34 @@ async function enviarCola() {
   if (enviando || !S || !navigator.onLine) return;
   enviando = true;
   try {
+    // 1. Fotos tomadas sin señal: se leen solas y se guardan EN REVISIÓN, porque nadie las comparó con el papel.
+    //    Solo un intento automático por foto; si no se lee, queda en Pendientes pidiendo repetirla.
+    let leidas = 0, enRevision = 0;
+    if (puede('fotos')) {
+      const sinLeer = (await colaTodas()).filter(it => it.estado === 'sin_leer' && !it.autoIntentado && !(it.calidad && it.calidad.length) &&
+        (!actual || actual.id !== it.id));
+      for (const it of sinLeer) {
+        it.autoIntentado = true;
+        await colaPut(it);
+        const r = await leerItem(it, true);
+        if (r === 'limite' || r === 'red') { it.autoIntentado = false; await colaPut(it); break; }
+        if (r !== 'ok') continue;
+        leidas++;
+        it.auto = true;
+        it.estado = 'por_enviar';
+        await colaPut(it);
+      }
+    }
+    // 2. Envío de lo que está listo
     const items = (await colaTodas()).filter(it => it.estado === 'por_enviar' && (!actual || actual.id !== it.id));
     for (const it of items) {
-      const ok = await enviarItem(it, false);
+      const ok = await enviarItem(it, false, !!it.auto);
+      if (ok && it.auto) enRevision++;
       if (!ok && !navigator.onLine) break;
     }
+    if (leidas) toast(leidas === 1
+      ? 'Una foto tomada sin señal se leyó sola' + (enRevision ? ' y quedó EN REVISIÓN: no suma hasta que el residente la compare con el papel.' : '. Revísala en Pendientes.')
+      : `${leidas} fotos tomadas sin señal se leyeron solas` + (enRevision ? ` y ${enRevision} quedaron EN REVISIÓN: no suman hasta que el residente las compare con el papel.` : '. Revísalas en Pendientes.'));
   } finally {
     enviando = false;
     contarPendientes();
@@ -464,15 +587,16 @@ async function pintarPendientes() {
   const items = (await colaTodas()).sort((a, b) => a.creado.localeCompare(b.creado));
   const box = $('#listaPend');
   if (!items.length) { box.innerHTML = '<div class="empty">No hay nada pendiente en este celular.</div>'; return; }
-  const txt = { sin_leer: 'Sin leer', por_revisar: 'Por revisar', por_enviar: 'Por enviar', requiere_decision: 'Repetida: decidir' };
-  const cls = { sin_leer: 'warn', por_revisar: 'warn', por_enviar: '', requiere_decision: 'bad' };
+  const txt = { repetir: 'Repetir foto', sin_leer: 'Sin leer', por_revisar: 'Por revisar', por_enviar: 'Por enviar', requiere_decision: 'Repetida: decidir' };
+  const cls = { repetir: 'bad', sin_leer: 'warn', por_revisar: 'warn', por_enviar: '', requiere_decision: 'bad' };
+  const clave = it => it.estado === 'sin_leer' && (it.repetir || (it.calidad && it.calidad.length)) ? 'repetir' : it.estado;
   box.innerHTML = items.map(it => {
     const d = it.datos || {};
     return `<article class="card">
       <img class="thumb" src="${it.imagen}" alt="">
       <div class="main"><span class="num">${d.numero ? 'N.º ' + esc(d.numero) : 'Sin datos'} · tomada ${new Date(it.creado).toLocaleString('es-CO')}</span>
         <div class="meta">${esc(d.material || '')} ${d.proveedor ? '· ' + esc(d.proveedor) : ''}</div></div>
-      <span class="chip ${cls[it.estado] || ''}">${txt[it.estado] || it.estado}</span>
+      <span class="chip ${cls[clave(it)] || ''}">${txt[clave(it)] || it.estado}</span>
       <div class="full"><button class="btn" data-abrir="${it.id}">Abrir</button></div>
     </article>`;
   }).join('');
@@ -691,7 +815,10 @@ async function iniciar() {
 }
 function pintarQuien() {
   const nombre = String(S.nombre || '').trim();
-  const primer = /^residente\b/i.test(nombre) ? '' : nombre.split(/\s+/)[0];
+  // Se salta el título (Ing., Arq., Dr.…): "Ing Leonardo Giraldo" → "Hola, Leonardo".
+  const partes = /^residente\b/i.test(nombre) ? [] : nombre.split(/\s+/);
+  while (partes.length > 1 && /^(ing|arq|dr|dra|sr|sra|tec|top|lic)\.?$/i.test(partes[0])) partes.shift();
+  const primer = partes[0] || '';
   $('#hola').textContent = primer ? `Hola, ${primer}` : 'Hola';
   const rol = S.rol ? S.rol.charAt(0).toUpperCase() + S.rol.slice(1) : '';
   $('#quien').textContent = [rol, CONFIG.OBRA && CONFIG.OBRA !== 'Nombre de la obra' ? CONFIG.OBRA : ''].filter(Boolean).join(' · ');

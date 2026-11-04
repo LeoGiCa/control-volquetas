@@ -165,3 +165,14 @@ section { display: grid; gap: 14px; }
 .overlay .btn { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; width: auto; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + 16px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--hd-bg); color: var(--hd-ink); padding: 12px 18px; border-radius: 12px; max-width: calc(100% - 32px); font-size: .95rem; }
 .reg .btn.chico { justify-self: start; margin-top: 4px; }
+
+/* v1.3: confirmación contra el papel y aviso de foto */
+.confirma { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; border: 2px solid var(--warn-line); background: var(--warn-soft); }
+.confirma.listo { border-color: var(--ok-soft); background: var(--accent-soft); }
+.confirma p { margin: 0; font-weight: 700; color: var(--ink); }
+.chk { display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 1rem; cursor: pointer; color: var(--ink); }
+.chk input { width: 26px; height: 26px; accent-color: var(--accent); flex: none; }
+.chk b { font-family: var(--f-mono, monospace); }
+.repetir { display: grid; gap: 10px; padding: 12px 14px; border-radius: 14px; border: 2px solid var(--bad); background: var(--bad-soft); color: var(--bad); }
+.repetir p { margin: 0; font-weight: 600; }
+.repetir .grid .btn { min-height: 50px; }
