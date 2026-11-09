@@ -43,7 +43,8 @@ async function api(accion, datos) {
     throw { error: 'red', mensaje: 'Sin conexión con el servidor.' };
   }
   if (!r.ok) throw { error: 'red', mensaje: `El servidor respondió ${r.status}.` };
-  const j = await r.json();
+  let j;
+  try { j = await r.json(); } catch (e) { throw { error: 'servidor', mensaje: 'El servidor respondió algo inesperado. Intenta de nuevo en un momento.' }; }
   if (j.error === 'sesion') { salir(); throw j; }
   return j;
 }
@@ -311,7 +312,7 @@ async function leerItem(it, auto) {
   const enPantalla = () => actual && actual.id === it.id;
   if (enPantalla()) estado($('#stCap'), 'Leyendo el recibo… puede tardar entre 10 y 40 segundos.');
   try {
-    const j = await api('leer', { imagen: it.imagen, hash: it.hash });
+    const j = await leerEnServidor(it, enPantalla);
     if (j.fotoDuplicada) {
       it.estado = 'requiere_decision';
       it.duplicado = j.fotoDuplicada;
@@ -334,7 +335,46 @@ async function leerItem(it, auto) {
       return 'repetir';
     }
     if (enPantalla()) pintarBotonesSinLeer((err.mensaje || 'No se pudo leer.') + (err.error === 'red' ? ' La foto quedó en Pendientes.' : ''));
-    return err.error === 'ia_limite' ? 'limite' : err.error === 'red' ? 'red' : 'error';
+    return err.error === 'ia_limite' ? 'limite' : err.error === 'red' ? 'red' : err.error === 'ia_demorada' || err.error === 'ia_ocupada' ? 'limite' : 'error';
+  }
+}
+
+/* El iPhone deja de esperar a ~1 min, pero el servidor sigue leyendo hasta terminar.
+   Por eso cada lectura lleva un número de trabajo: si la espera se corta o se alarga, la app
+   le pregunta al servidor cada 5 s por ese trabajo hasta tener el resultado. */
+const LECTURA = { ESPERA_DIRECTA: 40000, CADA: 5000, MAXIMO: 390000 };
+const pausa = ms => new Promise(ok => setTimeout(ok, ms));
+
+async function leerEnServidor(it, enPantalla) {
+  const trabajo = String(it.id).replace(/[^A-Za-z0-9-]/g, '').slice(0, 50) + '-' + Date.now();
+  const inicio = Date.now();
+  let fin = null;   // { j } o { err }
+  const directo = api('leer', { imagen: it.imagen, hash: it.hash, trabajo })
+    .then(j => { fin = { j }; }, err => { fin = { err }; });
+  await Promise.race([directo, pausa(LECTURA.ESPERA_DIRECTA)]);
+  let desconocido = 0, sinRed = 0;
+  while (true) {
+    if (fin && fin.j) return fin.j;
+    if (fin && fin.err && fin.err.error !== 'red') throw fin.err;
+    if (Date.now() - inicio > LECTURA.MAXIMO) {
+      throw { error: 'ia_demorada', mensaje: 'Gemini está demorado y no respondió. Llena los datos a mano o intenta en unos minutos.' };
+    }
+    if (enPantalla()) {
+      const s = Math.round((Date.now() - inicio) / 1000);
+      estado($('#stCap'), `Sigue leyendo (${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})… Gemini está tardando más de lo normal. No cierres la app.`);
+    }
+    await pausa(LECTURA.CADA);
+    if (fin && fin.j) return fin.j;
+    let r;
+    try { r = await api('resultado', { trabajo }); sinRed = 0; }
+    catch (err) {
+      if (err.error === 'accion_desconocida') { await directo; continue; }   // servidor viejo: solo queda esperar
+      if (err.error !== 'red') throw err;
+      if (++sinRed >= 3) throw err;           // de verdad no hay señal: queda en Pendientes
+      continue;
+    }
+    if (r.estado === 'listo') { if (!r.respuesta.ok && !r.respuesta.fotoDuplicada) throw r.respuesta; return r.respuesta; }
+    if (r.estado === 'desconocido' && fin && fin.err && ++desconocido >= 2) throw fin.err;   // la foto nunca llegó al servidor
   }
 }
 
