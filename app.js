@@ -171,11 +171,17 @@ $('#avisos').onclick = e => { const b = e.target.closest('[data-ir]'); if (b) ve
 $('#btnInicio').onclick = () => limpiar();
 
 /* ---------------- foto ---------------- */
+/* "Tomar foto y llenar a mano": la foto queda como soporte, pero no se manda a leer. */
+let modoManual = false;
+document.querySelectorAll('label[for="foto"], label[for="fotoGaleria"]').forEach(l => l.addEventListener('click', () => { modoManual = false; }));
+$('#btnFotoManual').onclick = () => { modoManual = true; $('#foto').click(); };
 $('#foto').onchange = e => nuevaFoto(e.target.files[0]);
 $('#fotoGaleria').onchange = e => nuevaFoto(e.target.files[0]);
 
 async function nuevaFoto(file) {
   if (!file) return;
+  const manual = modoManual;
+  modoManual = false;
   // Si la foto anterior no se alcanzó a leer, la nueva la reemplaza (no queda basura en Pendientes).
   const previa = actual;
   actual = null;
@@ -192,6 +198,7 @@ async function nuevaFoto(file) {
     await colaPut(it);
     abrir(it);
     contarPendientes();
+    if (manual) return llenarAMano();
     if (calidad.problemas.length) return pintarRepetir(it, 'La foto ' + calidad.problemas.join(' y ') + '. Tómala otra vez: recibo completo, de frente, con buena luz y el celular quieto.', true);
     if (navigator.onLine) leerItem(it);
     else estado($('#stCap'), 'Sin señal: la foto quedó guardada en Pendientes y se leerá sola cuando vuelva la señal. Si prefieres, llena los datos a mano.');
