@@ -308,11 +308,22 @@ function pintarBotonesSinLeer(mensaje) {
 
 /* Lee la foto en el servidor. Devuelve 'ok' | 'duplicada' | 'repetir' | 'limite' | 'red' | 'error'.
  * auto = lectura sola al volver la señal (no toca la pantalla salvo que esa foto esté abierta). */
+/* Mientras Gemini lee, siempre se puede pasar a llenar a mano; la lectura que llegue después se ignora. */
+function pintarLeyendo(it, msg) {
+  const st = $('#stCap');
+  st.classList.remove('err');
+  st.innerHTML = `<p class="status">${esc(msg)}</p>
+    <button class="btn" type="button" id="btnManualYa">Llenar a mano (no esperar)</button>`;
+  $('#btnManualYa').onclick = () => { it.manual = true; llenarAMano(); };
+}
+
 async function leerItem(it, auto) {
-  const enPantalla = () => actual && actual.id === it.id;
-  if (enPantalla()) estado($('#stCap'), 'Leyendo el recibo… puede tardar entre 10 y 40 segundos.');
+  it.manual = false;
+  const enPantalla = () => actual && actual.id === it.id && !it.manual;
+  if (enPantalla()) pintarLeyendo(it, 'Leyendo el recibo… puede tardar entre 10 y 40 segundos.');
   try {
     const j = await leerEnServidor(it, enPantalla);
+    if (it.manual) return 'manual';
     if (j.fotoDuplicada) {
       it.estado = 'requiere_decision';
       it.duplicado = j.fotoDuplicada;
@@ -328,6 +339,7 @@ async function leerItem(it, auto) {
     if (enPantalla()) { estado($('#stCap'), 'Listo. Revisa los datos contra el papel.'); mostrarFormulario(it); }
     return 'ok';
   } catch (err) {
+    if (it.manual) return 'manual';
     if (err.error === 'repetir' || err.error === 'no_remision') {
       it.repetir = err.mensaje;
       await colaPut(it);
@@ -361,7 +373,7 @@ async function leerEnServidor(it, enPantalla) {
     }
     if (enPantalla()) {
       const s = Math.round((Date.now() - inicio) / 1000);
-      estado($('#stCap'), `Sigue leyendo (${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})… Gemini está tardando más de lo normal. No cierres la app.`);
+      pintarLeyendo(it, `Sigue leyendo (${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})… Gemini está tardando más de lo normal. No cierres la app.`);
     }
     await pausa(LECTURA.CADA);
     if (fin && fin.j) return fin.j;

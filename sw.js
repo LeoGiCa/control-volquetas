@@ -1,6 +1,6 @@
 // Service worker: guarda la app en el celular para que abra sin señal.
 // Cambia VERSION en cada actualización para que los celulares descarguen la nueva.
-const VERSION = 'cv-1.4.0';
+const VERSION = 'cv-1.4.1';
 const ARCHIVOS = [
   './', './index.html', './styles.css', './app.js', './config.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'
