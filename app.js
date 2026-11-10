@@ -441,6 +441,24 @@ function pintarConfirma() {
   $('#btnGuardar').textContent = listo ? 'Guardar remisión' : 'Confirma N.º y cantidad para guardar';
 }
 
+/* Igual que materialOficial() del servidor: nombre oficial del material o null si no está en la lista. */
+const normTxt = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+function materialOficial(texto, mats) {
+  const t = normTxt(texto);
+  if (!t || !mats || !mats.length) return null;
+  const claves = [];
+  mats.forEach(m => [m.nombre].concat(m.alias || []).forEach(a => { const k = normTxt(a); if (k.length >= 3) claves.push({ k, m }); }));
+  const exacto = claves.find(c => c.k === t);
+  if (exacto) return exacto.m;
+  const dentro = claves.filter(c => c.k.length >= 4 && t.indexOf(c.k) >= 0).sort((a, b) => b.k.length - a.k.length);
+  if (dentro.length) return dentro[0].m;
+  if (t.length >= 5) {
+    const parte = Array.from(new Set(claves.filter(c => c.k.indexOf(t) >= 0).map(c => c.m)));
+    if (parte.length === 1) return parte[0];
+  }
+  return null;
+}
+
 function pintarAlertas() {
   if (!actual) return;
   const d = leerFormulario();
@@ -453,6 +471,12 @@ function pintarAlertas() {
   if (c && c.excede) lista.push({ t: c.excede, bad: true });
   if (d.firma === 'no') lista.push({ t: 'Sin firma de recibido.', bad: true });
   if (!d.hora) lista.push({ t: 'El recibo no tiene hora.' });
+  const mats = catalogo && catalogo.materialesContrato;
+  if (mats && mats.length && d.material) {
+    const m = materialOficial(d.material, mats);
+    if (!m) lista.push({ t: `"${d.material}" no está en la lista de materiales del contrato: la remisión quedará En revisión.`, bad: true });
+    else if (m.nombre !== d.material) lista.push({ t: `Se guardará como "${m.nombre}".` });
+  }
   $('#alertas').innerHTML = lista.map(x => `<li class="${x.bad ? 'bad' : ''}">${esc(x.t)}</li>`).join('');
 }
 
@@ -832,8 +856,13 @@ function pintarCatalogos(c) {
   if (!$('#v-placas').hidden) pintarPlacas();
   $('#dlProv').innerHTML = (c.proveedores || []).map(p => `<option>${esc(p)}</option>`).join('');
   $('#dlPlacas').innerHTML = (c.placas || []).map(p => `<option>${esc(p.placa)}</option>`).join('');
-  const extra = (c.materiales || []).filter(m => ![...$('#dlMat').options].some(o => o.value === m));
-  $('#dlMat').insertAdjacentHTML('beforeend', extra.map(m => `<option>${esc(m)}</option>`).join(''));
+  if ((c.materialesContrato || []).length) {
+    // Lista del contrato (pestaña Materiales): solo esos nombres
+    $('#dlMat').innerHTML = c.materialesContrato.map(m => `<option>${esc(m.nombre)}</option>`).join('');
+  } else {
+    const extra = (c.materiales || []).filter(m => ![...$('#dlMat').options].some(o => o.value === m));
+    $('#dlMat').insertAdjacentHTML('beforeend', extra.map(m => `<option>${esc(m)}</option>`).join(''));
+  }
   $('#lnkExcel').hidden = !c.excel; if (c.excel) $('#lnkExcel').href = c.excel;
   $('#lnkHoja').hidden = !c.hoja; if (c.hoja) $('#lnkHoja').href = c.hoja;
 }
